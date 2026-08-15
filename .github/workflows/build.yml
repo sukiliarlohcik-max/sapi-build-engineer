@@ -1,0 +1,98 @@
+name: Build APK from ZIP
+
+on:
+  repository_dispatch:
+    types: [build-from-zip]
+  workflow_dispatch:
+    inputs:
+      download_url:
+        description: 'URL download ZIP'
+        required: true
+        type: string
+      app_name:
+        description: 'Nama Aplikasi'
+        required: true
+        type: string
+      build_type:
+        description: 'flutter atau android'
+        required: true
+        default: 'flutter'
+        type: choice
+        options:
+          - flutter
+          - android
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Download ZIP
+      run: |
+        DOWNLOAD_URL="${{ github.event.client_payload.download_url || github.event.inputs.download_url }}"
+        echo "📥 Downloading from: $DOWNLOAD_URL"
+        wget -O project.zip "$DOWNLOAD_URL"
+        unzip project.zip -d project
+        echo "📂 ZIP extracted to ./project"
+        ls -la project/
+
+    - name: Setup Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    - name: Setup Flutter
+      if: github.event.client_payload.build_type == 'flutter' || github.event.inputs.build_type == 'flutter'
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: '3.22.0'
+        channel: 'stable'
+
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
+
+    - name: Build Flutter APK
+      if: github.event.client_payload.build_type == 'flutter' || github.event.inputs.build_type == 'flutter'
+      run: |
+        cd project
+        echo "📱 Building Flutter APK..."
+        flutter clean
+        flutter pub get
+        flutter build apk --release --split-per-abi
+        echo "✅ Flutter build selesai!"
+        ls -la build/app/outputs/flutter-apk/
+
+    - name: Build Android APK
+      if: github.event.client_payload.build_type == 'android' || github.event.inputs.build_type == 'android'
+      run: |
+        cd project
+        echo "🤖 Building Android APK..."
+        chmod +x gradlew
+        ./gradlew clean assembleRelease
+        echo "✅ Android build selesai!"
+        ls -la app/build/outputs/apk/release/
+
+    - name: Upload APK Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ github.event.client_payload.app_name || github.event.inputs.app_name }}-apk
+        path: |
+          project/build/app/outputs/flutter-apk/*.apk
+          project/app/build/outputs/apk/release/*.apk
+        retention-days: 7
+
+    - name: Notifikasi Sukses
+      if: success()
+      run: |
+        echo "✅ Build sukses!"
+        echo "📱 App: ${{ github.event.client_payload.app_name || github.event.inputs.app_name }}"
+
+    - name: Notifikasi Gagal
+      if: failure()
+      run: |
+        echo "❌ Build gagal!"
